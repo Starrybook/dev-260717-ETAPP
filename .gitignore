@@ -1,0 +1,10 @@
+.DS_Store
+*.tar.gz
+*.zip
+
+*.aux
+*.bbl
+*.out
+ETAPP-Paper/*.log
+
+sessions/
