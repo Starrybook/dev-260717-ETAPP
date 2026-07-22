@@ -40,6 +40,7 @@ def build_inference_parser() -> argparse.ArgumentParser:
     parser.add_argument("--request_timeout", "--request-timeout", type=float, default=None)
     parser.add_argument("--max_new_tokens", "--max-new-tokens", type=int, default=None)
     parser.add_argument("--max_model_len", "--max-model-len", type=int, default=None)
+    parser.add_argument("--generation_temperature", "--generation-temperature", type=float, default=None)
     parser.add_argument("--tool_retriever_model_path", "--tool-retriever-model-path", default=None)
     parser.add_argument("--wikipedia_index_path", "--wikipedia-index-path", default=None)
     return parser

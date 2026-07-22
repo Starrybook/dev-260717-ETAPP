@@ -363,6 +363,7 @@ class OpenModel:
         request_timeout: Optional[float] = None,
         max_new_tokens: Optional[int] = None,
         max_model_len: Optional[int] = None,
+        generation_temperature: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -370,6 +371,7 @@ class OpenModel:
         self.max_sequence_length = max_sequence_length
         self.max_new_tokens = max_new_tokens
         self.max_model_len = max_model_len
+        self.generation_temperature = generation_temperature
         tokenizer_config = {
             "max_sequence_length": max_sequence_length
         }
@@ -484,6 +486,16 @@ class OpenModel:
                 f"max_model_len={self.max_model_len}. Reduce the prompt or --max_new_tokens."
             )
 
+    def _vllm_completion(self, prompt: str, generation_budget: int):
+        request = {
+            "model": self.vllmurl_model_name,
+            "prompt": prompt,
+            "max_tokens": generation_budget,
+        }
+        if self.generation_temperature is not None:
+            request["temperature"] = self.generation_temperature
+        return self.client.completions.create(**request)
+
     def prediction(self, method, timestamp, max_length: int = 16384, max_new_tokens: int = 1024, tool_list = None) -> str:
         generation_budget = self._generation_budget()
         if method == "react" or method == "e-react":
@@ -491,11 +503,7 @@ class OpenModel:
             self._check_context_window(inputs[0], generation_budget)
             
             if self.use_vllm:
-                completion = self.client.completions.create(
-                    model=self.vllmurl_model_name,
-                    prompt = inputs[0],
-                    max_tokens=generation_budget
-                )
+                completion = self._vllm_completion(inputs[0], generation_budget)
                 prediction = completion.choices[0].text.strip()
             else:
                 tokenize_kwargs = dict(
@@ -528,11 +536,7 @@ class OpenModel:
             self._check_context_window(inputs[0], generation_budget)
             
             if self.use_vllm:
-                completion = self.client.completions.create(
-                    model=self.vllmurl_model_name,
-                    prompt = inputs[0],
-                    max_tokens=generation_budget
-                    )
+                completion = self._vllm_completion(inputs[0], generation_budget)
                 prediction = completion.choices[0].text
                 if self.model_type == "llama":
                     if completion.choices[0].stop_reason == 128008:

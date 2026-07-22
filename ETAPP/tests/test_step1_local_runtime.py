@@ -32,10 +32,12 @@ class CliAndPathTests(unittest.TestCase):
             "--instruction_file", "/instructions.json",
             "--output-dir", "/tmp/explicit-output",
             "--max_new_tokens", "1024",
+            "--generation-temperature", "0.0",
         ])
         self.assertEqual(args.profile_file, "/profiles.json")
         self.assertEqual(args.instruction_file, "/instructions.json")
         self.assertEqual(args.max_new_tokens, 1024)
+        self.assertEqual(args.generation_temperature, 0.0)
         with mock.patch.object(Path, "mkdir"):
             finalized = finalize_inference_args(args)
         self.assertEqual(finalized.output_dir, "/tmp/explicit-output")
@@ -115,6 +117,13 @@ class OpenModelTests(unittest.TestCase):
         model.change_messages([{"role": "user", "content": "hello"}])
         self.assertEqual(model.prediction("react", timestamp="2024-01-01 00:00:00"), "ok")
         self.assertEqual(client.completions.create.call_args.kwargs["max_tokens"], 123)
+        self.assertNotIn("temperature", client.completions.create.call_args.kwargs)
+
+    def test_explicit_generation_temperature_is_forwarded(self):
+        model, client, _constructor = self._make_model(generation_temperature=0.0)
+        model.change_messages([{"role": "user", "content": "hello"}])
+        model.prediction("react", timestamp="2024-01-01 00:00:00")
+        self.assertEqual(client.completions.create.call_args.kwargs["temperature"], 0.0)
 
     def test_context_overflow_is_reported_before_request(self):
         model, client, _constructor = self._make_model(max_new_tokens=4, max_model_len=6)
