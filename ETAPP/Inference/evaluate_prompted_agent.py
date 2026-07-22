@@ -1,21 +1,23 @@
 import os
 import json
-from tqdm import tqdm 
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable):
+        return iterable
 import argparse
 import logging
-from PLA.Inference.prompts.generation_prompt import PROMPT_DICT
-from PLA.Inference.prompts.generation_retrieval_prompt import RETRIEVAL_PROMPT_DICT
-from PLA.Inference.prompts.generation_prompt import *
-from PLA.Inference.prompts.generation_retrieval_prompt import *
-from PLA.Inference.models import MODELS
-from PLA.toolkit.tool_manager import ToolManager
-from PLA.toolkit.Toolsearcher.Toolsearcher import Tool_And_History_Searcher
-import openai
+from Inference.prompts.generation_prompt import PROMPT_DICT
+from Inference.prompts.generation_retrieval_prompt import RETRIEVAL_PROMPT_DICT
+from Inference.prompts.generation_prompt import *
+from Inference.prompts.generation_retrieval_prompt import *
+from Inference.models import MODELS
+from toolkit.tool_manager import ToolManager
 import re
+from pathlib import Path
+from Inference.arguments import build_inference_parser, finalize_inference_args
 
-openai.api_key = os.environ.get('API_KEY')
-
-
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 transfor_dict = {'get_current_health_and_mood_status': 'health', 
                  'get_recent_health_and_mood_summary': 'health', 
@@ -89,6 +91,8 @@ def method_converter(model, method, params, tool_manager, tools_list, profile_di
                 else:
                     result, parse_result = model.parse(method=method, timestamp=timestamp)
             except Exception as e:
+                if "max_model_len" in str(e):
+                    raise
                 assert "Please reduce the length of the" in str(e)
                 
                 conversation_history.append(
@@ -214,6 +218,8 @@ def method_converter(model, method, params, tool_manager, tools_list, profile_di
             result = model.parse(method, plan=True, timestamp=timestamp)
         except Exception as e:
             logging.info(str(e))
+            if "max_model_len" in str(e):
+                raise
             assert "Please reduce the length of the" in str(e)
             
             conversation_history.append(
@@ -380,6 +386,8 @@ def method_converter(model, method, params, tool_manager, tools_list, profile_di
                     predictions, all_action, whether_finish = model.parse(method=method, tools_list=tools_list, timestamp=timestamp)
                 except Exception as e:
                     logging.info(str(e))
+                    if "max_model_len" in str(e):
+                        raise
                     assert "Please reduce the length of the" in str(e)
                     
                     conversation_history.append(
@@ -675,7 +683,6 @@ def predict_instruction(system_prompt, user_prompt, params, item, model, user_pr
 
 
     if params["use_retrieval"] == True:
-        retriever = Tool_And_History_Searcher(user_name)
         available_tools = [
             {
                 "type": "function",
@@ -741,7 +748,6 @@ def predict_instruction(system_prompt, user_prompt, params, item, model, user_pr
                                                 query = instruction,
                                                 )
     else:
-        retriever = None
         preferences = []
         available_tool_names = item["available_tools_name"]
         available_tools = []
@@ -808,24 +814,26 @@ def main(params):
     output_dir = params["output_dir"]
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    instruction_data_dir = '../data/instruction'
-    
     with open(params['profile_file'], 'r') as profile_f:
         profiles = json.load(profile_f)
 
     for i, (person, profile) in enumerate(profiles.items()):
-        file_name = f"instruction.json"
+        file_name = "instruction.json"
         print(f"--------------testing {person}----------------")
         person_name = person.replace(" ", "_")
 
         
-        with open(os.path.join("../profile/concrete_profile", f"profile_{person_name}.json"), "r") as f:
+        with open(os.path.join(params["concrete_profile_dir"], f"profile_{person_name}.json"), "r") as f:
             profile_dict = json.load(f)
 
         logging.info("loading ToolManager")
-        tool_manager = ToolManager(person_name)
+        tool_manager = ToolManager(
+            person_name,
+            tool_retriever_model_path=params.get("tool_retriever_model_path"),
+            wikipedia_index_path=params.get("wikipedia_index_path"),
+        )
         logging.info("ToolManager loaded successfully")
-        instruction_file = os.path.join(instruction_data_dir, file_name)
+        instruction_file = params["instruction_file"]
         
         output_file = os.path.join(output_dir, person_name + "_" + file_name)
         if not os.path.exists(output_file):
@@ -862,47 +870,8 @@ def main(params):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_type", type=str, help="Type of the model to evaluate")
-    
-    parser.add_argument("--model_name", help="Name of the model to evaluate", default='')
-    parser.add_argument("--base_name_or_path", help="Name of the model to evaluate", default='')
-    parser.add_argument("--model_name_or_path", help="Name of the model to evaluate", default='')
-    parser.add_argument("--max_sequence_length", help="The max sequence length", type=int, default=8192)
-
-
-    parser.add_argument("--setting", choices=['base', 'enhanced'], help="base or enhanced setting")
-    parser.add_argument("--prompt_type", choices=['InjecAgent', 'hwchase17_react'], help="prompt type")
-    parser.add_argument("--logging_dir", default="")
-    parser.add_argument("--output_dir", default=lambda: f"")
-    parser.add_argument("--method", default="general")
-    parser.add_argument("--add_example", action="store_true")
-
-    parser.add_argument("--reasoning", action="store_true")
-
-    parser.add_argument("--profile_file", default="../profile/profiles.json")
-    parser.add_argument("--mode", type=str, default="function_calling")
-    parser.add_argument("--use_retrieval", action="store_true")
-    parser.add_argument("--add_reminder", action="store_true")
-    parser.add_argument("--use_vllm", action="store_true")
-    parser.add_argument("--peft_path", type=str, default=None)
-    parser.add_argument("--max_turn", type=int, default=3)
-    parser.add_argument("--max_observation_length", type=int, default=8192) 
-
-    parser.add_argument("--total_max_tokens", type=int, default=16384) 
-    parser.add_argument("--max_parallel_calls", type=int, default=10)
-    parser.add_argument("--max_tool_calls", type=int, default=50)
-
-
-    args = parser.parse_args()
-    if args.use_retrieval == True:
-        args.output_dir = f"../output/prompted_{args.model_type}_{args.model_name}_{args.method}_retrieve"
-        args.logging_dir = f"../output/prompted_{args.model_type}_{args.model_name}_{args.method}_retrieve/inference.log"
-    else:
-        args.output_dir = f"../output/prompted_{args.model_type}_{args.model_name}_{args.method}"
-        args.logging_dir = f"../output/prompted_{args.model_type}_{args.model_name}_{args.method}/inference.log"
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    parser = build_inference_parser()
+    args = finalize_inference_args(parser.parse_args())
     params = args.__dict__
 
     logging.basicConfig(

@@ -11,7 +11,7 @@ logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
 
 
 class Tool_And_History_Searcher:
-    def __init__(self, name: str):
+    def __init__(self, name: str, model_name_or_path: str = None):
         
         all_config_file = {}
         processed_all_config = []
@@ -24,7 +24,7 @@ class Tool_And_History_Searcher:
             if folder not in except_files:
                 for file in os.listdir(os.path.join(apis_dir, folder)):
                     if file != "__init__.py" and file != "config.json" and file != '__pycache__':
-                        module = importlib.import_module("PLA.toolkit." + folder + "." + file.split('.')[0])
+                        module = importlib.import_module("toolkit." + folder + "." + file.split('.')[0])
                         classes = [getattr(module, x) for x in dir(module) if isinstance(getattr(module, x), type)]
                         classes = [cls for cls in classes if cls.__name__ in tool_list.values()]
                         if len(classes) == 0:
@@ -54,7 +54,8 @@ class Tool_And_History_Searcher:
                 fun['desc_for_search'] = desc_for_search
                 processed_all_config.append(fun)
         self.apis = processed_all_config
-        self.model = SentenceTransformer('sentence-transformers/paraphrase-MiniLM-L3-v2')
+        self.model_name_or_path = model_name_or_path or 'sentence-transformers/paraphrase-MiniLM-L3-v2'
+        self.model = SentenceTransformer(self.model_name_or_path)
 
     
     

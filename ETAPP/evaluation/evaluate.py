@@ -1,15 +1,23 @@
 import os
 import json
-from tqdm import tqdm 
 import argparse
 import logging
-from PLA.evaluation.evaluate_prompt import *
-from PLA.Inference.models import MODELS
-import openai
+from evaluation.evaluate_prompt import *
 import re
-from termcolor import colored
-from openai import OpenAI
 import time
+from pathlib import Path
+from evaluation.common import (
+    build_evaluation_parser,
+    finalize_evaluation_args,
+    load_results,
+    make_sample_key,
+    request_evaluation,
+    score_with_retries,
+    is_successful,
+    write_results,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 transfor_dict = {'get_current_health_and_mood_status': 'health', 
                  'get_recent_health_and_mood_summary': 'health', 
@@ -53,44 +61,25 @@ transfor_dict = {'get_current_health_and_mood_status': 'health',
                  'get_future_weather': '',
                  'get_weather_for_current_hour': ''}
 
-def get_score(model_name, base_url=None, message = []):
-    if model_name == "gpt-4o-2024-11-20" or model_name == "gpt-4o-mini":
-        api_key = os.environ.get('API_KEY')
-        client = OpenAI(api_key=api_key)
-    elif model_name == "deepseek-chat":
-        api_key = os.environ.get('DEEPSEEK_API_KEY')
-        base_url = "https://api.deepseek.com"
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-    x = client.chat.completions.create(
-        model=model_name,
-        messages=message,
-        temperature=0.0,
-        max_tokens=8192
-    )
-    logging.info(x)
-    result = x.choices[0].message.content
-    # print(result)
-    pattern = r'```json(.*?)```'
-    match = re.search(pattern, result, re.DOTALL)
 
-    if match:
-        # 获取匹配的JSON字符串
-        json_str = match.group(1).strip().replace('\\', '\\\\').replace('\\"', '\\\\"')
-        try:
-            # 将JSON字符串解析为Python字典
-            evaluation_results = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            print("Error decoding JSON:", e)
-            print(json_str)
-            raise Exception
-    else:
-        print("No JSON block found.")
-        raise Exception
+def get_instruction_id(_user_index, result_index):
+    return result_index
+
+def get_score(model_name, base_url=None, message=None, api_key=None,
+              max_tokens=8192, temperature=0.0, request_timeout=None):
+    evaluation_results, _ = request_evaluation(
+        model_name=model_name,
+        messages=message or [],
+        base_url=base_url,
+        api_key=api_key,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        request_timeout=request_timeout,
+    )
     return evaluation_results
 
         
-def evaluate_personalization_and_proactivity(instruction, profile, profile_dict, result, evaluation_models, plan=False, model="gpt-4o"):
-    openai.api_key = os.environ.get('API_KEY')
+def evaluate_personalization_and_proactivity(instruction, profile, profile_dict, result, evaluation_models, plan=False, model="gpt-4o", evaluation_config=None):
     timestamp = result['timestamp']
 
     
@@ -157,25 +146,18 @@ def evaluate_personalization_and_proactivity(instruction, profile, profile_dict,
     # print(message[0]["content"])
     logging.info(message[0]["content"])
     scores = {}
+    evaluation_config = evaluation_config or {}
     for model_name in evaluation_models:
-        error_time = 0
-        while error_time < 20:
-            try:
-                evaluation_results = get_score(model_name=model_name, message=message)
-                break
-            except Exception as e:
-                print(e)
-                error_time += 1
-                # raise Exception
-        scores[model_name] = {}
-        scores[model_name]["Procedure"] = int(evaluation_results["Procedure"]["Final Assessment"]["score"])
-        scores[model_name]["Personalization"] = int(evaluation_results["Personalization"]["Final Assessment"]["score"])
-        scores[model_name]["Proactivity"] = int(evaluation_results["Proactivity"]["Final Assessment"]["score"])
-        scores[model_name]["evaluation_result"] = evaluation_results
-        
-
-        logging.info(model_name)
-        logging.info(str(scores[model_name]["Procedure"]) + " " + str(scores[model_name]["Personalization"]) + " " + str(scores[model_name]["Proactivity"]))
+        scores[model_name] = score_with_retries(
+            model_name=model_name,
+            messages=message,
+            base_url=evaluation_config.get("evaluation_base_url"),
+            api_key=evaluation_config.get("evaluation_api_key"),
+            max_tokens=evaluation_config.get("evaluation_max_tokens", 8192),
+            temperature=evaluation_config.get("evaluation_temperature", 0.0),
+            request_timeout=evaluation_config.get("evaluation_request_timeout"),
+        )
+        logging.info("%s: %s", model_name, scores[model_name])
     
     # breakpoint()
     return [result], scores
@@ -184,23 +166,16 @@ def evaluate_personalization_and_proactivity(instruction, profile, profile_dict,
 def main(params):
     with open(params['profile_file'], 'r') as profile_f:
         profiles = json.load(profile_f)
-    all_score = {}
-    evaluation_models = ["gpt-4o-2024-11-20"]
-    for model in evaluation_models:
-        all_score[model] = {'Procedure': 0, 'Personalization': 0, 'Proactivity': 0}
-    all_evaluate_result = []
-    num = 0
-    with open("../data/instruction/instruction.json", 'r') as f:
+    evaluation_models = [params.get("evaluation_model", "gpt-4o-2024-11-20")]
+    with open(params["instruction_file"], 'r') as f:
         all_instruction = json.load(f)  
     plan = True if "e-react" in params['result_file'] else False
-    if os.path.exists(params["evaluate_output_dir"]):
-        with open(params["evaluate_output_dir"], "r") as file:
-            all_evaluate_result = json.load(file)
-    len_already = len(all_evaluate_result)
+    all_evaluate_result = load_results(params["evaluate_result_file"])
+    completed_keys = {
+        item.get("sample_key") for item in all_evaluate_result if is_successful(item)
+    }
+    setting = params.get("setting") or Path(params["result_file"]).name
     for i, (person, profile) in enumerate(profiles.items()):
-        if i * 50 < len_already:
-            # len_already -= 50
-            continue
         print(i)
         person_name = person.replace(" ", "_")
         file_name = f"{person_name}_instruction.json"
@@ -209,17 +184,18 @@ def main(params):
         with open(result_file, 'r') as f:
             model_result = json.load(f)
 
-        with open(os.path.join("../profile/concrete_profile", f"profile_{person_name}.json"), "r") as f:
+        with open(os.path.join(params["concrete_profile_dir"], f"profile_{person_name}.json"), "r") as f:
             profile_dict = json.load(f)
         
         # for idx, result in enumerate(model_result[a[i]: a[i]+1]):
         #     instruction = all_instruction[a[i]]
         for idx, result in enumerate(model_result):
-            if i*50 + idx < len_already:
-                print(idx)
+            instruction_id = get_instruction_id(i, idx)
+            sample_key = make_sample_key(setting, evaluation_models[0], person_name, instruction_id)
+            if sample_key in completed_keys:
                 continue
-            print(f"processing {person}, instruction id {idx}")
-            instruction = all_instruction[idx]
+            print(f"processing {person}, instruction id {instruction_id}")
+            instruction = all_instruction[instruction_id]
             assert result["query"] == instruction["query"]
             preferences = []
             available_tool_names = result["available_tools_name"]
@@ -251,47 +227,41 @@ def main(params):
                 if transfor_dict[tool_name] != "" and transfor_dict[tool_name] not in already_add:
                     already_add.append(transfor_dict[tool_name])
                     preferences.append(profile_dict[transfor_dict[tool_name]])
-            evaluate_result, score = evaluate_personalization_and_proactivity(instruction, profile=profile, profile_dict=preferences, result=result, evaluation_models=evaluation_models, plan=plan)
-            num += 1
-            for model in evaluation_models:
-                all_score[model]['Procedure'] += score[model]['Procedure']
-                all_score[model]['Personalization'] += score[model]['Personalization']
-                all_score[model]['Proactivity'] += score[model]['Proactivity']
-            all_evaluate_result.append({"query": params["result_file"] + "_" + person_name + "_" + result["query"], "evaluation_result": score})
+            evaluate_result, score = evaluate_personalization_and_proactivity(
+                instruction, profile=profile, profile_dict=preferences, result=result,
+                evaluation_models=evaluation_models, plan=plan, evaluation_config=params,
+            )
+            all_evaluate_result = [item for item in all_evaluate_result if item.get("sample_key") != sample_key]
+            all_evaluate_result.append({
+                "sample_key": sample_key,
+                "setting": setting,
+                "user": person_name,
+                "instruction_id": instruction_id,
+                "query": params["result_file"] + "_" + person_name + "_" + result["query"],
+                "evaluation_result": score,
+            })
+            write_results(all_evaluate_result, params["evaluate_result_file"], params["summary_file"])
 
         
-        with open(params["evaluate_output_dir"], "w") as file:
-            json.dump(all_evaluate_result, file, ensure_ascii=False, indent=4)
-    for model in evaluation_models:
-        all_score[model]['Procedure'] = all_score[model]['Procedure'] / num
-        all_score[model]['Personalization'] = all_score[model]['Personalization'] / num
-        all_score[model]['Proactivity'] = all_score[model]['Proactivity'] / num
-    
-    print("evaluating data num: {}".format(num))
-    print(all_score)
-
-    logging.info("evaluating data num: {}".format(num))
-    logging.info(all_score)
+        summary = write_results(all_evaluate_result, params["evaluate_result_file"], params["summary_file"])
+    summary = write_results(all_evaluate_result, params["evaluate_result_file"], params["summary_file"])
+    print(summary)
+    logging.info(summary)
 
 
     return
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--profile_file", default="../profile/profiles.json")
-    parser.add_argument("--result_file", default="../output/prompted_CHATGPT_gpt-4o_react")
-
-
-    args = parser.parse_args()
-    args.evaluate_output_dir = args.result_file + f"/evaluate_result.json"
+    parser = build_evaluation_parser()
+    args = finalize_evaluation_args(parser.parse_args())
         
     params = args.__dict__
     c_time = time.time()
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
-        filename=args.result_file + f"/evaluate_result_logging_{c_time}.log", 
+        filename=args.logging_dir,
         filemode='w' 
     )
     

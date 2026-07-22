@@ -1,14 +1,14 @@
 {
-    "PLA.toolkit.Web_Browsing.Web_Browse": "Browser",
-    "PLA.toolkit.Health_control.Health_control": "HealthMonitoringApp",
-    "PLA.toolkit.Calendar.Calendar": "Calendar",
-    "PLA.toolkit.Weather.Weather": "WeatherData",
-    "PLA.toolkit.Shopping_manager.Shopping_manager": "ECommerce",
-    "PLA.toolkit.Email.Email": "Email",
-    "PLA.toolkit.Music_control.Music_control": "MusicStreamingApp",
-    "PLA.toolkit.Toolsearcher.Toolsearcher": "Tool_And_History_Searcher",
-    "PLA.toolkit.Navigation.Map": "Navigation_And_Map",
-    "PLA.toolkit.Smart_home_devices.Temperature_and_humidity_control": "Thermostat",
-    "PLA.toolkit.Smart_home_devices.Lighting_control": "Light",
-    "PLA.toolkit.Smart_home_devices.Appliance_control": "SmartAppliance"
+    "toolkit.Web_Browsing.Web_Browse": "Browser",
+    "toolkit.Health_control.Health_control": "HealthMonitoringApp",
+    "toolkit.Calendar.Calendar": "Calendar",
+    "toolkit.Weather.Weather": "WeatherData",
+    "toolkit.Shopping_manager.Shopping_manager": "ECommerce",
+    "toolkit.Email.Email": "Email",
+    "toolkit.Music_control.Music_control": "MusicStreamingApp",
+    "toolkit.Toolsearcher.Toolsearcher": "Tool_And_History_Searcher",
+    "toolkit.Navigation.Map": "Navigation_And_Map",
+    "toolkit.Smart_home_devices.Temperature_and_humidity_control": "Thermostat",
+    "toolkit.Smart_home_devices.Lighting_control": "Light",
+    "toolkit.Smart_home_devices.Appliance_control": "SmartAppliance"
 }

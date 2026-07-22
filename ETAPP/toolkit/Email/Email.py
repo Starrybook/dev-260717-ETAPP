@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 import random
 import os
-from PLA.toolkit.utils import generate_timestamp_random_id
+from toolkit.utils import generate_timestamp_random_id
 from rank_bm25 import BM25Okapi
 
 EMAIL_REGEX = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
@@ -184,4 +184,3 @@ if __name__ == '__main__':
     print("\n")
     print(email_system.search_email_by_content(query="speech presentation"))
     
-

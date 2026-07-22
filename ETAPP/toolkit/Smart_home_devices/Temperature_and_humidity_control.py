@@ -5,7 +5,7 @@ from typing import Union
 import time
 import random
 import os
-from PLA.toolkit.utils import generate_timestamp_random_id
+from toolkit.utils import generate_timestamp_random_id
 import pickle
 
 class Thermostat:
@@ -147,4 +147,3 @@ if __name__ == '__main__':
     # print("Operation History:")
     # for record in thermostat.get_history():
     #     print(record)
-

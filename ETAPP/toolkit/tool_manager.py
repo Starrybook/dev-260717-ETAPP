@@ -2,8 +2,17 @@ import os
 import json
 import inspect
 
+
+def tool_constructor_kwargs(cls_name, tool_retriever_model_path=None, wikipedia_index_path=None):
+    if cls_name == "Tool_And_History_Searcher":
+        return {"model_name_or_path": tool_retriever_model_path}
+    if cls_name == "Browser":
+        return {"wikipedia_index_path": wikipedia_index_path}
+    return {}
+
 class ToolManager:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, tool_retriever_model_path: str = None,
+                 wikipedia_index_path: str = None) -> None:
         import importlib.util
 
         all_apis = []
@@ -18,7 +27,7 @@ class ToolManager:
             if folder not in except_files:
                 for file in os.listdir(os.path.join(apis_dir, folder)):
                     if file != "__init__.py" and file != "config.json" and file != '__pycache__':
-                        module = importlib.import_module("PLA.toolkit." + folder + "." + file.split('.')[0])
+                        module = importlib.import_module("toolkit." + folder + "." + file.split('.')[0])
                         classes = [getattr(module, x) for x in dir(module) if isinstance(getattr(module, x), type)]
                         
                         classes = [cls for cls in classes if cls.__name__ in tool_list.values()]
@@ -56,6 +65,11 @@ class ToolManager:
                     if api_name in [x[0] for x in functions]:
                         print(f"{cls_name}--{api_name}")
                         nameprint[api_name] = ""
+                        constructor_kwargs = tool_constructor_kwargs(
+                            cls_name,
+                            tool_retriever_model_path=tool_retriever_model_path,
+                            wikipedia_index_path=wikipedia_index_path,
+                        )
                         # Get all functions in the class
                         
                         cls_info = {
@@ -65,7 +79,7 @@ class ToolManager:
                             'api_name': api_name,
                             'description': all_config_file[cls_name][api_name]['function']['description'],
                             'config': all_config_file[cls_name][api_name],
-                            'instance': cls(self.name),
+                            'instance': cls(self.name, **constructor_kwargs),
                         }
                         
                         apis.append(cls_info)

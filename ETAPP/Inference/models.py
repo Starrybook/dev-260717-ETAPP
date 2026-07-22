@@ -3,12 +3,21 @@ import time
 from typing import Optional
 import re
 from typing import Optional, List
-from termcolor import colored
+try:
+    from termcolor import colored
+except ImportError:  # Keep --help/import available before optional dependencies are installed.
+    def colored(text, *_args, **_kwargs):
+        return text
 import time
-import openai
+try:
+    import openai
+    from openai import OpenAI
+except ImportError:  # Model construction still reports the missing runtime dependency.
+    openai = None
+    OpenAI = None
 import json
 import logging
-from PLA.Inference.constant import *
+from Inference.constant import *
 
 
 def react_parser(message):
@@ -348,26 +357,37 @@ class OpenModel:
         stop_words: list = [],
         use_vllm: bool = True,
         peft_path: Optional[str] = None,
+        vllm_base_url: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        vllm_api_key: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        max_new_tokens: Optional[int] = None,
+        max_model_len: Optional[int] = None,
         **kwargs
     ) -> None:
         super().__init__()
         self.model_name = model_name_or_path
         self.max_sequence_length = max_sequence_length
+        self.max_new_tokens = max_new_tokens
+        self.max_model_len = max_model_len
         tokenizer_config = {
             "max_sequence_length": max_sequence_length
         }
         self.fc_tokenizer_template = None
         if 'llama' in model_name.lower():
             model_name='llama'
-            self.vllmurl_model_name=os.environ.get("llama_model_name")
+            legacy_served_model_name = os.environ.get("llama_model_name")
             self.fc_tokenizer_template = llama_format_prompt
         elif 'qwen' in model_name.lower():
             model_name='qwen'
-            self.vllmurl_model_name=os.environ.get("qwen_model_name")
+            legacy_served_model_name = os.environ.get("qwen_model_name")
         elif 'watt' in model_name.lower():
             model_name='watt'
-            self.vllmurl_model_name=os.environ.get("watt_model_name")
+            legacy_served_model_name = os.environ.get("watt_model_name")
             self.fc_tokenizer_template = watt_format_prompt
+        else:
+            raise ValueError(f"Unsupported open model family: {model_name}")
+        self.vllmurl_model_name = served_model_name or legacy_served_model_name
         self.model_type = model_name
         self.filter=FILTER_DICT[model_name]
         self.parser=PARSER_DICT[model_name]
@@ -377,11 +397,16 @@ class OpenModel:
             tokenizer_config,
         )
         if self.use_vllm:
-            openai_api_base = os.environ.get("url")
-            self.client = OpenAI(
-                api_key="EMPTY",
-                base_url=openai_api_base,
-            )
+            if OpenAI is None:
+                raise ImportError("The 'openai' package is required for vLLM's OpenAI-compatible endpoint")
+            openai_api_base = vllm_base_url or os.environ.get("url")
+            client_kwargs = {
+                "api_key": vllm_api_key or os.environ.get("VLLM_API_KEY") or "EMPTY",
+                "base_url": openai_api_base,
+            }
+            if request_timeout is not None:
+                client_kwargs["timeout"] = request_timeout
+            self.client = OpenAI(**client_kwargs)
         else:
             self._load_model(
                 model_name_or_path,
@@ -443,15 +468,33 @@ class OpenModel:
         return potential_stop_words
 
 
+    def _generation_budget(self) -> int:
+        if self.max_new_tokens is not None:
+            return self.max_new_tokens
+        return 16384 if self.use_vllm else 1024
+
+    def _check_context_window(self, prompt: str, generation_budget: int) -> None:
+        if self.max_model_len is None:
+            return
+        prompt_tokens = len(self.tokenizer.encode(prompt, add_special_tokens=False))
+        if prompt_tokens + generation_budget > self.max_model_len:
+            raise ValueError(
+                "Prompt and generation budget exceed max_model_len: "
+                f"prompt_tokens={prompt_tokens}, max_new_tokens={generation_budget}, "
+                f"max_model_len={self.max_model_len}. Reduce the prompt or --max_new_tokens."
+            )
+
     def prediction(self, method, timestamp, max_length: int = 16384, max_new_tokens: int = 1024, tool_list = None) -> str:
+        generation_budget = self._generation_budget()
         if method == "react" or method == "e-react":
             inputs = [self.tokenizer.apply_chat_template(self.conversation_history, add_generation_prompt=True, tokenize=False)]
+            self._check_context_window(inputs[0], generation_budget)
             
             if self.use_vllm:
                 completion = self.client.completions.create(
                     model=self.vllmurl_model_name,
                     prompt = inputs[0],
-                    max_tokens=max_length
+                    max_tokens=generation_budget
                 )
                 prediction = completion.choices[0].text.strip()
             else:
@@ -465,7 +508,7 @@ class OpenModel:
                 tokens = self.tokenizer.batch_encode_plus(inputs, **tokenize_kwargs).to("cuda")
                 output = self.model.generate(
                     **tokens,
-                    max_new_tokens=max_new_tokens,
+                    max_new_tokens=generation_budget,
                     eos_token_id=[self.tokenizer.convert_tokens_to_ids(word) for word in self.stop_words],
                     pad_token_id=self.tokenizer.pad_token_id,
                     do_sample=False,
@@ -482,12 +525,13 @@ class OpenModel:
                 inputs = [self.fc_tokenizer_template(self.conversation_history, function=tool_list, timestamp=timestamp)]
             else:
                 inputs = [self.tokenizer.apply_chat_template(self.conversation_history, tools=tool_list, add_generation_prompt=True, tokenize=False)]
+            self._check_context_window(inputs[0], generation_budget)
             
             if self.use_vllm:
                 completion = self.client.completions.create(
                     model=self.vllmurl_model_name,
                     prompt = inputs[0],
-                    max_tokens=max_length
+                    max_tokens=generation_budget
                     )
                 prediction = completion.choices[0].text
                 if self.model_type == "llama":
@@ -507,7 +551,7 @@ class OpenModel:
                 
                 output = self.model.generate(
                     **tokens,
-                    max_new_tokens=max_new_tokens,
+                    max_new_tokens=generation_budget,
                     eos_token_id=[self.tokenizer.convert_tokens_to_ids(word) for word in self.stop_words],
                     pad_token_id=self.tokenizer.pad_token_id,
                     do_sample=False,
@@ -621,6 +665,8 @@ class ChatGPT:
         **kwargs
     ) -> None:
         super().__init__()
+        if openai is None:
+            raise ImportError("The 'openai' package is required for ChatGPT inference")
         
         openai.api_key = os.environ.get("API_KEY") 
         if orgnization is not None:
@@ -758,7 +804,6 @@ class ChatGPT:
             return predictions, all_action
 
 
-from openai import OpenAI
 class DeepSeek:
     def __init__(
         self,
@@ -768,6 +813,8 @@ class DeepSeek:
         **kwargs
     ) -> None:
         super().__init__()
+        if OpenAI is None:
+            raise ImportError("The 'openai' package is required for DeepSeek inference")
         api_key = os.environ.get('DEEPSEEK_API_KEY')
         self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         

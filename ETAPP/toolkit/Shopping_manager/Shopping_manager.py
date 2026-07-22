@@ -7,7 +7,7 @@ import time
 import random
 import pickle
 import json
-from PLA.toolkit.utils import generate_timestamp_random_id
+from toolkit.utils import generate_timestamp_random_id
 from rank_bm25 import BM25Okapi
 
 
@@ -68,7 +68,7 @@ class ECommerce:
         # Create the BM25 model
         bm25_model = BM25Okapi(tokenized_corpus)
         return bm25_model
-    
+
     
     def add_product_to_cart(self, product_id: str, product_name: str, quantity: int) -> dict:
         """
@@ -150,5 +150,3 @@ if __name__ == '__main__':
     
     print(ecommerce.search_products_in_shopping_manager(["Organic Cotton Bed Sheets", "Books by Matt Haig", "Leather Wallet", "Gourmet Olive Oil"]))
     print(ecommerce.search_products_in_shopping_manager(["orange", "common fruits"]))
-
-    

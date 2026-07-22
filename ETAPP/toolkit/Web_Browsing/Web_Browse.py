@@ -14,12 +14,13 @@ from typing import List
 class Browser:
     def __init__(self, name: str, 
                  data_path: str = os.path.dirname(os.path.abspath(__file__)) + "/../../database/Web_Browsing/news_data.pkl", 
-                
+                 wikipedia_index_path: str = None,
                  ) -> None:
         """
         Initializes the web browser with history and bookmarks.
         """
         self.name = name
+        self.wikipedia_index_path = wikipedia_index_path
         
 
         self.app_id = None
@@ -57,9 +58,10 @@ class Browser:
             A dictionary containing the search status and the processed search results. The 'data' field contains a list of processed paragraphs, each in the format "title\ntruncated content".
 
         """
-        searcher = LuceneSearcher.from_prebuilt_index('enwiki-paragraphs') # sparse wikipedia-kilt-doc
-
-        searcher = LuceneSearcher.from_prebuilt_index('wikipedia-kilt-doc')
+        if self.wikipedia_index_path:
+            searcher = LuceneSearcher(self.wikipedia_index_path)
+        else:
+            searcher = LuceneSearcher.from_prebuilt_index('wikipedia-kilt-doc')
         paragraphs, titles = self.information_retrieval(query, topk, searcher)
         processed_paragraphs = []
         for p in paragraphs:

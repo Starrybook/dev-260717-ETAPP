@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 import time
 import random
 import os
-from PLA.toolkit.utils import generate_timestamp_random_id
+from toolkit.utils import generate_timestamp_random_id
 
 
 
@@ -34,7 +34,7 @@ class SmartAppliance:
         self.bathtub_water_level = bathtub_water_level  # Initial water level in the bathtub
         self.bathtub_temperature = bathtub_temperature  # Initial water temperature in Celsius
 
-    
+
 
     def control_curtains_in_home(self, open: str) -> str:
         """
@@ -124,9 +124,3 @@ if __name__ == '__main__':
 
     # Set kettle temperature and boil water
     print(user_appliance.boil_water(90))
-
-    
-
-    
-
-    
